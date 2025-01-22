@@ -28,9 +28,14 @@ def train_sarima(df_train, df_test, train_features, test_features, train_target,
     )
 
     #ajout predictions dans le dataset
-    df_test['Electric_Consumption'] = predictions
+    df_test['Electric_Consumption'] = predictions   
 
-    #visualisation résultats
+    import os
+    results_dir = "results"
+    os.makedirs(results_dir, exist_ok=True)
+    plot_path = os.path.join(results_dir, "sarima_predictions.png")
+
+    # Création et sauvegarde du graphique
     plt.figure(figsize=(10, 6))
     plt.plot(df_train[target_column], label='Train Data', color='blue')
     plt.plot(df_test['Electric_Consumption'], label='SARIMA Predictions', color='green')
@@ -38,30 +43,20 @@ def train_sarima(df_train, df_test, train_features, test_features, train_target,
     plt.title('SARIMA Predictions vs Actual Data')
     plt.xlabel('Date')
     plt.ylabel('Target')
-    plt.show()
 
-    #on retire "Date" comme index pour pouvoir étudier correctement le dataset avec LSTM ensuite
-    df_test.reset_index(inplace=True)
-    df_test[['Date', 'Electric_Consumption']].to_csv("results/predictions.csv", index=False)
+    # Sauvegarde du graphique dans le dossier /results
+    plt.savefig(plot_path)
+    plt.close() 
+    
+    return df_test
 
-def train_lstm(df_train, columns_to_scale, scaler):
+def train_lstm(df_test, train_features, test_features, train_target, target_column):
 
-    df_test = pd.read_csv("data/test_df.csv")
-    df_test[columns_to_scale] = scaler.transform(df_test[columns_to_scale])
-    df_test['Date'] = pd.to_datetime(df_test['Date'])
     df_test = df_test.sort_values(by='Date')
-
-    target_column = "Electric_Consumption"  
-    feature_columns_train = [col for col in df_train.columns if col not in ['Date', target_column]] 
-    feature_columns_test = [col for col in df_test.columns if col not in ['Date']]
-
-    # Définir la variable cible et les features
-    X_train = df_train[feature_columns_train]  # Toutes les colonnes avant 'target'
-    y_train = df_train[target_column]  # Colonne 'target'
-    X_test = df_test[feature_columns_test]
 
     # Fonction pour créer des séquences
     def create_sequences(X, y, time_steps):
+        import numpy as np
         if len(X) <= time_steps:
             raise ValueError("Le paramètre `time_steps` est trop grand pour la longueur des données.")
         
@@ -71,23 +66,20 @@ def train_lstm(df_train, columns_to_scale, scaler):
             y_seq.append(y[i + time_steps])
         return np.array(X_seq), np.array(y_seq)
 
-
+    import numpy as np
     # Paramètre de séquencement (nombre de pas de temps)
     time_steps = 10
 
     # Créer les séquences
-    X_train, y_train = create_sequences(X_train, y_train, time_steps)
+    train_features, train_target = create_sequences(train_features, train_target, time_steps)
     X_seq = []
-    for i in range(len(X_test) - time_steps):
-            X_seq.append(X_test[i:i + time_steps])
-    X_test = np.array(X_seq)
-
-    print("Shape finale de X_train :", X_train.shape)
-    print("Shape finale de X_test :", X_test.shape)
+    for i in range(len(test_features) - time_steps):
+            X_seq.append(test_features[i:i + time_steps])
+    test_features = np.array(X_seq)
 
     # Construire le modèle LSTM
     model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])))
+    model.add(LSTM(units=50, return_sequences=True, input_shape=(train_features.shape[1], train_features.shape[2])))
     model.add(LSTM(units=50))
     model.add(Dense(units=1))  # Une sortie pour la prédiction de la target
 
@@ -95,10 +87,10 @@ def train_lstm(df_train, columns_to_scale, scaler):
     model.compile(optimizer='adam', loss='mean_squared_error')
 
     # Entraîner le modèle
-    model.fit(X_train, y_train, epochs=20, batch_size=32)
+    model.fit(train_features, train_target, epochs=20, batch_size=32)
 
     # Prédire sur l'ensemble de test
-    predicted = model.predict(X_test)
+    predicted = model.predict(test_features)
 
     import numpy as np
 
@@ -117,6 +109,4 @@ def train_lstm(df_train, columns_to_scale, scaler):
     # Remplir les valeurs manquantes ou non valides
     df_test['Electric_Consumption'] = df_test['Electric_Consumption'].fillna(0)  # Remplacer NaN par 0 ou une autre valeur
 
-    # Exportation au format CSV
-    df_test[['Date', 'Electric_Consumption']].to_csv("results/predictions2.csv", index=False)
-    print("Exportation réussie.")
+    return df_test
